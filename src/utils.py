@@ -65,15 +65,15 @@ def setup_logger(name: str = "visa_scheduler") -> logging.Logger:
 def setup_driver() -> webdriver.Chrome:
     """
     Set up and configure Chrome WebDriver.
-    
+
     Returns:
         Configured Chrome WebDriver instance
     """
     chrome_options = Options()
-    
+
     if Config.HEADLESS:
         chrome_options.add_argument("--headless")
-    
+
     # Additional options for stability
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -82,22 +82,57 @@ def setup_driver() -> webdriver.Chrome:
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # User agent to appear more like a real browser
+
+    # User agent
     chrome_options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     )
-    
-    # Initialize driver
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    
+
+    # Initialize driver with ChromeDriverManager
+    # This automatically downloads the correct version matching your Chrome browser
+    try:
+        # Get the chromedriver path from ChromeDriverManager
+        driver_path = ChromeDriverManager().install()
+        logging.info(f"ChromeDriverManager returned: {driver_path}")
+
+        # Fix for the path issue: ChromeDriverManager returns wrong file
+        # Always look for the actual "chromedriver" file in the parent directory
+        parent_dir = os.path.dirname(driver_path)
+        correct_driver_path = os.path.join(parent_dir, "chromedriver")
+
+        if os.path.exists(correct_driver_path):
+            driver_path = correct_driver_path
+            logging.info(f"Found correct chromedriver at: {driver_path}")
+        else:
+            logging.warning(f"Could not find chromedriver at {correct_driver_path}, using original path")
+
+        # Make sure it's executable
+        if os.path.exists(driver_path):
+            os.chmod(driver_path, 0o755)
+            logging.info(f"✓ Using chromedriver at: {driver_path}")
+        else:
+            raise FileNotFoundError(f"Could not find chromedriver at {driver_path}")
+
+        service = Service(driver_path)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"ChromeDriverManager failed: {error_msg}")
+
+        # Check if it's a version mismatch in the error message
+        if "version" in error_msg.lower() and "supports" in error_msg.lower():
+            logging.error("ChromeDriver version mismatch detected!")
+            logging.error("Please update Chrome browser: Open Chrome -> Settings -> About Chrome")
+            logging.error("Or install matching chromedriver version")
+
+        raise Exception(f"Failed to initialize ChromeDriver: {error_msg}")
+
     # Set timeouts
     driver.implicitly_wait(Config.IMPLICIT_WAIT)
     driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
-    
+
     return driver
 
 
