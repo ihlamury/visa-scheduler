@@ -89,10 +89,11 @@ def setup_driver() -> webdriver.Chrome:
         options.add_argument("--disable-blink-features=AutomationControlled")
 
         # Create undetected Chrome driver
+        # Specify version_main=141 to match your Chrome browser version
         driver = uc.Chrome(
             options=options,
             use_subprocess=True,
-            version_main=None,  # Auto-detect Chrome version
+            version_main=141,  # Match your Chrome version 141.x
         )
 
         # Set timeouts
