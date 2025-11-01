@@ -11,6 +11,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+import undetected_chromedriver as uc
 from src.config import Config
 
 
@@ -64,76 +65,53 @@ def setup_logger(name: str = "visa_scheduler") -> logging.Logger:
 
 def setup_driver() -> webdriver.Chrome:
     """
-    Set up and configure Chrome WebDriver.
+    Set up and configure Chrome WebDriver using undetected-chromedriver.
+    This bypasses Cloudflare and other bot detection systems.
 
     Returns:
         Configured Chrome WebDriver instance
     """
-    chrome_options = Options()
-
-    if Config.HEADLESS:
-        chrome_options.add_argument("--headless")
-
-    # Additional options for stability
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-
-    # User agent
-    chrome_options.add_argument(
-        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-
-    # Initialize driver with ChromeDriverManager
-    # This automatically downloads the correct version matching your Chrome browser
     try:
-        # Get the chromedriver path from ChromeDriverManager
-        driver_path = ChromeDriverManager().install()
-        logging.info(f"ChromeDriverManager returned: {driver_path}")
+        logging.info("Setting up undetected Chrome WebDriver...")
 
-        # Fix for the path issue: ChromeDriverManager returns wrong file
-        # Always look for the actual "chromedriver" file in the parent directory
-        parent_dir = os.path.dirname(driver_path)
-        correct_driver_path = os.path.join(parent_dir, "chromedriver")
+        # Configure options for undetected-chromedriver
+        options = uc.ChromeOptions()
 
-        if os.path.exists(correct_driver_path):
-            driver_path = correct_driver_path
-            logging.info(f"Found correct chromedriver at: {driver_path}")
-        else:
-            logging.warning(f"Could not find chromedriver at {correct_driver_path}, using original path")
+        if Config.HEADLESS:
+            options.add_argument("--headless=new")  # Use new headless mode
 
-        # Make sure it's executable
-        if os.path.exists(driver_path):
-            os.chmod(driver_path, 0o755)
-            logging.info(f"✓ Using chromedriver at: {driver_path}")
-        else:
-            raise FileNotFoundError(f"Could not find chromedriver at {driver_path}")
+        # Additional options for stability and stealth
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-blink-features=AutomationControlled")
 
-        service = Service(driver_path)
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Create undetected Chrome driver
+        driver = uc.Chrome(
+            options=options,
+            use_subprocess=True,
+            version_main=None,  # Auto-detect Chrome version
+        )
+
+        # Set timeouts
+        driver.implicitly_wait(Config.IMPLICIT_WAIT)
+        driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
+
+        logging.info("✓ Undetected Chrome WebDriver initialized successfully")
+        return driver
+
     except Exception as e:
         error_msg = str(e)
-        logging.error(f"ChromeDriverManager failed: {error_msg}")
+        logging.error(f"Failed to initialize undetected Chrome: {error_msg}")
 
         # Check if it's a version mismatch in the error message
         if "version" in error_msg.lower() and "supports" in error_msg.lower():
             logging.error("ChromeDriver version mismatch detected!")
             logging.error("Please update Chrome browser: Open Chrome -> Settings -> About Chrome")
-            logging.error("Or install matching chromedriver version")
 
         raise Exception(f"Failed to initialize ChromeDriver: {error_msg}")
-
-    # Set timeouts
-    driver.implicitly_wait(Config.IMPLICIT_WAIT)
-    driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
-
-    return driver
 
 
 def save_screenshot(driver: webdriver.Chrome, name: str) -> Optional[str]:

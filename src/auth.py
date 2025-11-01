@@ -17,6 +17,58 @@ from src.utils import save_screenshot
 logger = logging.getLogger("visa_scheduler")
 
 
+def handle_cloudflare_challenge(driver: webdriver.Chrome, timeout: int = 30) -> bool:
+    """
+    Handle Cloudflare security challenge.
+
+    Args:
+        driver: Selenium WebDriver instance
+        timeout: Maximum seconds to wait for challenge to complete
+
+    Returns:
+        True if challenge passed, False otherwise
+    """
+    try:
+        logger.info("Checking for Cloudflare challenge...")
+
+        # Check if we're on Cloudflare challenge page
+        if "verify you are human" in driver.page_source.lower() or "cloudflare" in driver.page_source.lower():
+            logger.info("Cloudflare challenge detected!")
+            save_screenshot(driver, "cloudflare_challenge")
+
+            # Wait for user to complete the challenge or for it to auto-complete
+            logger.warning("=" * 60)
+            logger.warning("CLOUDFLARE CHALLENGE DETECTED")
+            logger.warning("Please complete the 'Verify you are human' checkbox")
+            logger.warning(f"Waiting {timeout} seconds for challenge to complete...")
+            logger.warning("=" * 60)
+
+            # Wait and check if challenge is resolved
+            import time
+            for i in range(timeout):
+                time.sleep(1)
+
+                # Check if we're past the challenge (login page loaded)
+                if "signInName" in driver.page_source or "password" in driver.page_source:
+                    logger.info("Cloudflare challenge passed!")
+                    save_screenshot(driver, "cloudflare_passed")
+                    return True
+
+                if i % 5 == 0 and i > 0:
+                    logger.info(f"Still waiting... {timeout - i} seconds remaining")
+
+            # Timeout
+            logger.error("Cloudflare challenge not completed in time")
+            return False
+        else:
+            logger.info("No Cloudflare challenge detected")
+            return True
+
+    except Exception as e:
+        logger.error(f"Error handling Cloudflare challenge: {e}")
+        return False
+
+
 def login(driver: webdriver.Chrome, username: str, password: str) -> bool:
     """
     Perform login on the visa scheduling website.
@@ -32,10 +84,19 @@ def login(driver: webdriver.Chrome, username: str, password: str) -> bool:
     try:
         logger.info("Navigating to login page...")
         driver.get(Config.BASE_URL)
-        
+
+        # Wait for initial page load
+        time.sleep(3)
+
+        # Handle Cloudflare challenge if present (should be bypassed with undetected-chromedriver)
+        if not handle_cloudflare_challenge(driver, timeout=20):
+            logger.error("Failed to pass Cloudflare challenge")
+            save_screenshot(driver, "cloudflare_failed")
+            return False
+
         # Wait for page to load
         wait = WebDriverWait(driver, 15)
-        
+
         # Wait for username field
         logger.info("Waiting for login form...")
         username_field = wait.until(
