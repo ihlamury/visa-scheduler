@@ -19,7 +19,7 @@ logger = logging.getLogger("visa_scheduler")
 
 def handle_cloudflare_challenge(driver: webdriver.Chrome, timeout: int = 30) -> bool:
     """
-    Handle Cloudflare security challenge.
+    Handle Cloudflare security challenge by automatically clicking the checkbox.
 
     Args:
         driver: Selenium WebDriver instance
@@ -33,39 +33,88 @@ def handle_cloudflare_challenge(driver: webdriver.Chrome, timeout: int = 30) -> 
 
         # Check if we're on Cloudflare challenge page
         if "verify you are human" in driver.page_source.lower() or "cloudflare" in driver.page_source.lower():
-            logger.info("Cloudflare challenge detected!")
-            save_screenshot(driver, "cloudflare_challenge")
+            logger.info("Cloudflare challenge detected! Attempting to solve automatically...")
+            save_screenshot(driver, "cloudflare_challenge_detected")
 
-            # Wait for user to complete the challenge or for it to auto-complete
-            logger.warning("=" * 60)
-            logger.warning("CLOUDFLARE CHALLENGE DETECTED")
-            logger.warning("Please complete the 'Verify you are human' checkbox")
-            logger.warning(f"Waiting {timeout} seconds for challenge to complete...")
-            logger.warning("=" * 60)
-
-            # Wait and check if challenge is resolved
+            # Try to find and click the Cloudflare checkbox
             import time
+            time.sleep(2)  # Wait for iframe to load
+
+            try:
+                # Cloudflare checkbox is usually in an iframe
+                logger.info("Looking for Cloudflare iframe...")
+
+                # Find all iframes
+                iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                logger.info(f"Found {len(iframes)} iframes")
+
+                for idx, iframe in enumerate(iframes):
+                    try:
+                        # Switch to iframe
+                        driver.switch_to.frame(iframe)
+                        logger.info(f"Switched to iframe {idx}")
+
+                        # Try to find the checkbox
+                        checkbox_selectors = [
+                            (By.CSS_SELECTOR, "input[type='checkbox']"),
+                            (By.CSS_SELECTOR, "#challenge-stage input"),
+                            (By.XPATH, "//input[@type='checkbox']"),
+                            (By.CSS_SELECTOR, "label input"),
+                        ]
+
+                        for by, selector in checkbox_selectors:
+                            try:
+                                checkbox = driver.find_element(by, selector)
+                                if checkbox.is_displayed():
+                                    logger.info(f"Found checkbox with selector: {selector}")
+                                    # Click it
+                                    checkbox.click()
+                                    logger.info("✓ Clicked Cloudflare checkbox!")
+                                    save_screenshot(driver, "cloudflare_checkbox_clicked")
+
+                                    # Switch back to main content
+                                    driver.switch_to.default_content()
+                                    break
+                            except:
+                                continue
+
+                        # Switch back to main content
+                        driver.switch_to.default_content()
+
+                    except Exception as e:
+                        logger.debug(f"Error checking iframe {idx}: {e}")
+                        driver.switch_to.default_content()
+                        continue
+
+            except Exception as e:
+                logger.warning(f"Could not find/click checkbox automatically: {e}")
+
+            # Now wait for the challenge to complete
+            logger.info(f"Waiting up to {timeout} seconds for challenge to resolve...")
+
             for i in range(timeout):
                 time.sleep(1)
 
                 # Check if we're past the challenge (login page loaded)
                 if "signInName" in driver.page_source or "password" in driver.page_source:
-                    logger.info("Cloudflare challenge passed!")
+                    logger.info("✓ Cloudflare challenge passed!")
                     save_screenshot(driver, "cloudflare_passed")
                     return True
 
+                # Check if still on Cloudflare page
                 if i % 5 == 0 and i > 0:
-                    logger.info(f"Still waiting... {timeout - i} seconds remaining")
+                    logger.info(f"Still waiting for challenge to complete... {timeout - i}s remaining")
 
             # Timeout
             logger.error("Cloudflare challenge not completed in time")
+            save_screenshot(driver, "cloudflare_timeout")
             return False
         else:
             logger.info("No Cloudflare challenge detected")
             return True
 
     except Exception as e:
-        logger.error(f"Error handling Cloudflare challenge: {e}")
+        logger.error(f"Error handling Cloudflare challenge: {e}", exc_info=True)
         return False
 
 
