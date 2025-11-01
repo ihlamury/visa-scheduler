@@ -92,9 +92,14 @@ def setup_driver() -> webdriver.Chrome:
         # Specify version_main=141 to match your Chrome browser version
         driver = uc.Chrome(
             options=options,
-            use_subprocess=True,
+            use_subprocess=False,  # Changed to False to prevent premature closure
             version_main=141,  # Match your Chrome version 141.x
+            driver_executable_path=None,  # Let it auto-download
         )
+
+        # Give the browser a moment to fully initialize
+        import time
+        time.sleep(2)
 
         # Set timeouts
         driver.implicitly_wait(Config.IMPLICIT_WAIT)

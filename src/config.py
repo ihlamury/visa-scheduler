@@ -72,15 +72,30 @@ class Config:
     
     @classmethod
     def get_security_answer(cls, question: str) -> Optional[str]:
-        """Get the answer for a specific security question."""
+        """Get the answer for a specific security question with flexible matching."""
+        # Clean up the question text (remove asterisks, extra spaces, etc.)
+        cleaned_question = question.replace("*", "").strip()
+
         # Try exact match first
-        if question in cls.SECURITY_ANSWERS:
-            return cls.SECURITY_ANSWERS[question]
-        
+        if cleaned_question in cls.SECURITY_ANSWERS:
+            return cls.SECURITY_ANSWERS[cleaned_question]
+
         # Try partial match (case-insensitive)
-        question_lower = question.lower()
+        question_lower = cleaned_question.lower()
         for q, answer in cls.SECURITY_ANSWERS.items():
-            if q.lower() in question_lower or question_lower in q.lower():
-                return answer
-        
+            q_clean = q.replace("*", "").strip().lower()
+            if q_clean in question_lower or question_lower in q_clean:
+                if answer:  # Make sure answer is not empty
+                    return answer
+
+        # Try keyword matching for very flexible matching
+        question_words = set(question_lower.replace("?", "").split())
+        for q, answer in cls.SECURITY_ANSWERS.items():
+            q_words = set(q.lower().replace("?", "").replace("*", "").split())
+            # If most words match, consider it a match
+            if len(q_words) > 3:
+                overlap = len(q_words.intersection(question_words))
+                if overlap >= len(q_words) * 0.7 and answer:  # 70% match
+                    return answer
+
         return None
