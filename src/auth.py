@@ -13,6 +13,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from src.config import Config
 from src.utils import save_screenshot
+from PIL import Image
+import pytesseract
+import io
+import base64
+import re
+
+try:
+    from anthropic import Anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 
 logger = logging.getLogger("visa_scheduler")
 
@@ -212,23 +223,169 @@ def login(driver: webdriver.Chrome, username: str, password: str) -> bool:
         return False
 
 
+def solve_captcha_with_claude(driver: webdriver.Chrome) -> Optional[str]:
+    """
+    Attempt to solve captcha using Claude's vision API.
+
+    Args:
+        driver: Selenium WebDriver instance
+
+    Returns:
+        Solved captcha text or None if failed
+    """
+    try:
+        # Check if API key is configured
+        if not Config.ANTHROPIC_API_KEY:
+            logger.info("No Anthropic API key configured, skipping Claude solver")
+            return None
+
+        if not ANTHROPIC_AVAILABLE:
+            logger.warning("Anthropic library not available")
+            return None
+
+        logger.info("Attempting Claude Vision API captcha solving...")
+
+        # Find the captcha image element
+        captcha_img_element = driver.find_element(By.ID, "captchaImage")
+
+        # Get the image as screenshot
+        captcha_png = captcha_img_element.screenshot_as_png
+
+        # Convert to base64
+        captcha_base64 = base64.b64encode(captcha_png).decode('utf-8')
+
+        # Save for debugging
+        try:
+            image = Image.open(io.BytesIO(captcha_png))
+            image.save("screenshots/captcha_claude_input.png")
+        except:
+            pass
+
+        # Call Claude API
+        client = Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+
+        message = client.messages.create(
+            model="claude-sonnet-4-5",  # Using Claude Sonnet 4.5 (latest version)
+            max_tokens=100,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": captcha_base64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "This is a CAPTCHA image. Please read ALL characters shown in the image, including letters, numbers, and any symbols or punctuation marks. Respond with ONLY the exact characters you see, with no spaces, no explanation, nothing else. Just the raw characters exactly as shown."
+                        }
+                    ],
+                }
+            ],
+        )
+
+        # Extract the text from Claude's response
+        captcha_text = message.content[0].text.strip().upper()
+
+        # Clean up the response (remove any non-alphanumeric characters)
+        captcha_text = re.sub(r'[^A-Z0-9]', '', captcha_text)
+
+        if len(captcha_text) >= 4:  # Typical captcha length
+            logger.info(f"✓ Claude solved captcha: {captcha_text}")
+            return captcha_text
+        else:
+            logger.warning(f"Claude returned invalid captcha (too short): {captcha_text}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Claude captcha solving failed: {e}")
+        import traceback
+        logger.debug(f"Full error traceback: {traceback.format_exc()}")
+        return None
+
+
+def solve_captcha_with_ocr(driver: webdriver.Chrome) -> Optional[str]:
+    """
+    Attempt to solve captcha using Tesseract OCR.
+
+    Args:
+        driver: Selenium WebDriver instance
+
+    Returns:
+        Solved captcha text or None if failed
+    """
+    try:
+        logger.info("Attempting Tesseract OCR captcha solving...")
+
+        # Find the captcha image element
+        captcha_img_element = driver.find_element(By.ID, "captchaImage")
+
+        # Get the image as screenshot
+        captcha_png = captcha_img_element.screenshot_as_png
+
+        # Convert to PIL Image
+        image = Image.open(io.BytesIO(captcha_png))
+
+        # Save for debugging
+        try:
+            image.save("screenshots/captcha_ocr_input.png")
+        except:
+            pass
+
+        # Preprocess image for better OCR results
+        # Convert to grayscale
+        image = image.convert('L')
+
+        # Try OCR with different configurations
+        configs = [
+            '--psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',  # Single line, alphanumeric only
+            '--psm 8 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',  # Single word
+            '--psm 7',  # Single line
+        ]
+
+        for config in configs:
+            try:
+                text = pytesseract.image_to_string(image, config=config)
+                # Clean up the text
+                text = re.sub(r'[^A-Z0-9]', '', text.upper().strip())
+
+                if len(text) >= 4:  # Typical captcha length
+                    logger.info(f"Tesseract OCR result: {text}")
+                    return text
+            except Exception as e:
+                logger.debug(f"OCR config failed: {e}")
+                continue
+
+        logger.warning("Tesseract OCR could not extract valid text from captcha")
+        return None
+
+    except Exception as e:
+        logger.warning(f"Tesseract OCR captcha solving failed: {e}")
+        return None
+
+
 def handle_captcha(driver: webdriver.Chrome) -> bool:
     """
     Handle the captcha on the login page.
-    
+    First tries OCR, then falls back to manual entry.
+
     Args:
         driver: Selenium WebDriver instance
-        
+
     Returns:
         True if captcha was solved, False otherwise
     """
     try:
         # Look for captcha input field
         captcha_field = driver.find_element(By.ID, "extension_atlasCaptchaResponse")
-        
+
         if captcha_field.is_displayed():
             logger.info("Captcha detected!")
-            
+
             # Try to get the captcha image for reference
             try:
                 captcha_img = driver.find_element(By.ID, "captchaImage")
@@ -236,13 +393,26 @@ def handle_captcha(driver: webdriver.Chrome) -> bool:
                 save_screenshot(driver, "captcha_to_solve")
             except NoSuchElementException:
                 logger.warning("Could not find captcha image element")
-            
-            # For now, we'll do manual captcha entry
-            logger.warning("=" * 60)
-            logger.warning("CAPTCHA DETECTED - MANUAL ENTRY REQUIRED")
-            logger.warning("Please look at the browser window and enter the captcha")
-            logger.warning("Waiting 60 seconds for manual entry...")
-            logger.warning("=" * 60)
+
+            # Use Claude Vision API to solve captcha
+            claude_result = solve_captcha_with_claude(driver)
+
+            if claude_result:
+                logger.info(f"✓ Claude solved captcha: {claude_result}")
+                captcha_field.clear()
+                captcha_field.send_keys(claude_result)
+                time.sleep(1)
+
+                logger.info("Captcha filled via Claude API, waiting for validation...")
+                return True
+            else:
+                # Claude failed - fall back to manual entry
+                logger.error("Claude Vision API failed to solve captcha")
+                logger.warning("=" * 60)
+                logger.warning("CLAUDE CAPTCHA SOLVING FAILED - MANUAL ENTRY REQUIRED")
+                logger.warning("Please look at the browser window and enter the captcha")
+                logger.warning("Waiting 60 seconds for manual entry...")
+                logger.warning("=" * 60)
             
             # Wait for user to enter captcha, but check periodically if we moved forward
             for i in range(60):

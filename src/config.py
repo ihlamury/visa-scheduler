@@ -45,7 +45,10 @@ class Config:
     TELEGRAM_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
     EMAIL_ADDRESS: Optional[str] = os.getenv("EMAIL_ADDRESS")
     EMAIL_PASSWORD: Optional[str] = os.getenv("EMAIL_PASSWORD")
-    
+
+    # Claude API for CAPTCHA solving
+    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+
     # Selenium settings
     HEADLESS: bool = os.getenv("HEADLESS", "True").lower() == "true"
     IMPLICIT_WAIT: int = 10
