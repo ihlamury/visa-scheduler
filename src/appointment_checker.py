@@ -22,45 +22,89 @@ logger = logging.getLogger("visa_scheduler")
 def navigate_to_scheduling(driver: webdriver.Chrome) -> bool:
     """
     Navigate to the appointment scheduling page.
-    
+
     Args:
         driver: Selenium WebDriver instance
-        
+
     Returns:
         True if navigation successful, False otherwise
     """
     try:
         logger.info("Navigating to appointment scheduling page...")
-        
-        wait = WebDriverWait(driver, 15)
-        
-        # Look for "Schedule Appointment" link/button
+
+        # Take screenshot of the dashboard
+        save_screenshot(driver, "logged_in_dashboard")
+
+        # Wait for page to load
+        time.sleep(2)
+
+        # Scroll down to make sure buttons are visible
+        logger.info("Scrolling down to find appointment buttons...")
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
+        time.sleep(1)
+
+        wait = WebDriverWait(driver, 20)
+
+        # Look for "Reschedule Appointment" link/button (or "Schedule Appointment" as fallback)
         schedule_selectors = [
+            (By.XPATH, "//a[contains(text(), 'Reschedule Appointment')]"),
+            (By.XPATH, "//button[contains(text(), 'Reschedule Appointment')]"),
+            (By.LINK_TEXT, "Reschedule Appointment"),
+            (By.PARTIAL_LINK_TEXT, "Reschedule"),
+            # Try case-insensitive
+            (By.XPATH, "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'reschedule')]"),
+            # Fallback to Schedule Appointment
             (By.XPATH, "//a[contains(text(), 'Schedule Appointment')]"),
             (By.XPATH, "//button[contains(text(), 'Schedule Appointment')]"),
             (By.LINK_TEXT, "Schedule Appointment"),
             (By.PARTIAL_LINK_TEXT, "Schedule"),
+            # Try continue/proceed buttons
+            (By.XPATH, "//a[contains(text(), 'Continue')]"),
+            (By.XPATH, "//button[contains(text(), 'Continue')]"),
         ]
-        
+
         for by, selector in schedule_selectors:
             try:
+                logger.info(f"Trying selector: {selector}")
                 schedule_button = wait.until(
                     EC.element_to_be_clickable((by, selector))
                 )
-                logger.info(f"Found Schedule Appointment button using: {selector}")
+                logger.info(f"✓ Found button using: {selector}")
+
+                # Scroll to the button to make sure it's visible
+                driver.execute_script("arguments[0].scrollIntoView(true);", schedule_button)
+                time.sleep(1)
+
                 schedule_button.click()
-                time.sleep(2)
-                
-                save_screenshot(driver, "scheduling_page")
+                logger.info("Clicked appointment button")
+                time.sleep(3)
+
+                save_screenshot(driver, "after_clicking_appointment_button")
                 logger.info("Successfully navigated to scheduling page")
                 return True
             except TimeoutException:
                 continue
-        
-        logger.error("Could not find Schedule Appointment button")
+            except Exception as e:
+                logger.debug(f"Error with selector {selector}: {e}")
+                continue
+
+        logger.error("Could not find Schedule/Reschedule Appointment button")
+        logger.info("Taking screenshot and dumping page source...")
         save_screenshot(driver, "schedule_button_not_found")
+
+        # Log all links on the page for debugging
+        try:
+            all_links = driver.find_elements(By.TAG_NAME, "a")
+            logger.info(f"Found {len(all_links)} links on page:")
+            for link in all_links[:20]:  # Log first 20 links
+                text = link.text.strip()
+                if text:
+                    logger.info(f"  Link: {text}")
+        except:
+            pass
+
         return False
-        
+
     except Exception as e:
         logger.error(f"Error navigating to scheduling: {e}", exc_info=True)
         save_screenshot(driver, "navigation_error")
@@ -141,50 +185,123 @@ def select_consular_post(driver: webdriver.Chrome, post_name: str = "ISTANBUL") 
 
 def navigate_to_target_month(driver: webdriver.Chrome, target_month: int, target_year: int) -> bool:
     """
-    Navigate the calendar to the target month and year.
-    
+    Navigate the calendar to the target month and year using dropdown selectors.
+
     Args:
         driver: Selenium WebDriver instance
         target_month: Target month (1-12)
         target_year: Target year
-        
+
     Returns:
         True if navigation successful, False otherwise
     """
     try:
         logger.info(f"Navigating to {target_month}/{target_year}")
-        
+
         wait = WebDriverWait(driver, 10)
-        max_clicks = 24  # Don't click more than 24 times (2 years worth)
+
+        # Month names for mapping
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        target_month_name = month_names[target_month - 1]
+
+        # Method 1: Try to find month and year dropdowns
+        try:
+            logger.info("Looking for month dropdown...")
+            # Find the month dropdown (usually a <select> element)
+            month_dropdown = None
+            month_selectors = [
+                (By.XPATH, "//select[contains(@class, 'month') or contains(@id, 'month')]"),
+                (By.XPATH, "//select[option[contains(text(), 'Jan') or contains(text(), 'Feb')]]"),
+                (By.XPATH, "//select[1]"),  # First select element
+            ]
+
+            for by, selector in month_selectors:
+                try:
+                    month_dropdown = driver.find_element(by, selector)
+                    logger.info(f"Found month dropdown with selector: {selector}")
+                    break
+                except:
+                    continue
+
+            if month_dropdown:
+                # Select the target month
+                month_select = Select(month_dropdown)
+                logger.info(f"Selecting month: {target_month_name}")
+                try:
+                    month_select.select_by_visible_text(target_month_name)
+                except:
+                    # Try with full month name
+                    full_month_names = ['January', 'February', 'March', 'April', 'May', 'June',
+                                       'July', 'August', 'September', 'October', 'November', 'December']
+                    month_select.select_by_visible_text(full_month_names[target_month - 1])
+
+                logger.info(f"✓ Month set to: {target_month_name}")
+                time.sleep(1)
+
+            # Find the year dropdown
+            logger.info("Looking for year dropdown...")
+            year_dropdown = None
+            year_selectors = [
+                (By.XPATH, "//select[contains(@class, 'year') or contains(@id, 'year')]"),
+                (By.XPATH, "//select[option[contains(text(), '202')]]"),
+                (By.XPATH, "//select[2]"),  # Second select element
+            ]
+
+            for by, selector in year_selectors:
+                try:
+                    year_dropdown = driver.find_element(by, selector)
+                    logger.info(f"Found year dropdown with selector: {selector}")
+                    break
+                except:
+                    continue
+
+            if year_dropdown:
+                # Select the target year
+                year_select = Select(year_dropdown)
+                logger.info(f"Selecting year: {target_year}")
+                year_select.select_by_visible_text(str(target_year))
+                logger.info(f"✓ Year set to: {target_year}")
+                time.sleep(2)  # Wait for calendar to reload
+
+                save_screenshot(driver, f"calendar_{target_month}_{target_year}")
+                logger.info(f"✓ Successfully navigated to {target_month_name} {target_year}")
+                return True
+            else:
+                logger.warning("Could not find year dropdown")
+
+        except Exception as e:
+            logger.warning(f"Dropdown method failed: {e}")
+
+        # Method 2: Fallback to clicking next/previous buttons (old method)
+        logger.info("Trying fallback method with next/previous buttons...")
+        max_clicks = 24
         clicks = 0
-        
+
         while clicks < max_clicks:
-            # Get current month/year displayed in calendar
             current_month_text = get_current_calendar_month(driver)
-            
+
             if not current_month_text:
                 logger.error("Could not determine current calendar month")
                 return False
-            
+
             logger.info(f"Current calendar shows: {current_month_text}")
-            
-            # Check if we're at the target month
+
             if is_target_month(current_month_text, target_month, target_year):
                 logger.info("Reached target month!")
                 save_screenshot(driver, f"calendar_{target_month}_{target_year}")
                 return True
-            
-            # Click next month button
+
             if not click_next_month(driver):
                 logger.error("Could not click next month button")
                 return False
-            
+
             clicks += 1
             time.sleep(1)
-        
+
         logger.error(f"Could not reach target month after {clicks} attempts")
         return False
-        
+
     except Exception as e:
         logger.error(f"Error navigating to target month: {e}", exc_info=True)
         save_screenshot(driver, "month_navigation_error")
@@ -303,64 +420,91 @@ def click_next_month(driver: webdriver.Chrome) -> bool:
 def check_availability(driver: webdriver.Chrome) -> List[Dict[str, str]]:
     """
     Check for available appointment slots in the current calendar view.
-    
+
     Args:
         driver: Selenium WebDriver instance
-        
+
     Returns:
         List of available appointments with date and time info
     """
     try:
         logger.info("Checking for available appointments...")
-        
+
         appointments = []
-        
-        # Look for clickable date cells
+
+        # Take a screenshot to see calendar state
+        save_screenshot(driver, "checking_availability")
+
+        # Look for date cells that are NOT disabled/grayed out
+        # Available dates typically don't have 'disabled' class and are clickable
         date_selectors = [
-            (By.XPATH, "//td[contains(@class, 'available')] | //td[not(contains(@class, 'disabled'))]"),
-            (By.XPATH, "//button[contains(@class, 'day')]"),
-            (By.XPATH, "//a[contains(@class, 'date')]"),
+            # Look for <td> or <a> elements that don't have 'disabled' class
+            (By.XPATH, "//td[not(contains(@class, 'disabled')) and not(contains(@class, 'ui-state-disabled'))]//a"),
+            (By.XPATH, "//td[contains(@class, 'available')]//a"),
+            (By.XPATH, "//a[contains(@class, 'ui-state-default') and not(contains(@class, 'ui-state-disabled'))]"),
+            # Try finding by data attributes
+            (By.XPATH, "//td[@data-handler='selectDay' and not(contains(@class, 'disabled'))]"),
+            # Generic clickable dates
+            (By.XPATH, "//td[not(contains(@class, 'disabled'))]//a[contains(@href, '#')]"),
         ]
-        
+
         for by, selector in date_selectors:
             try:
                 date_elements = driver.find_elements(by, selector)
-                
+                logger.info(f"Found {len(date_elements)} date elements with selector: {selector}")
+
                 for element in date_elements:
-                    # Check if the element is clickable (not disabled/grayed out)
-                    if element.is_displayed() and element.is_enabled():
-                        try:
-                            # Get date information
-                            date_text = element.text.strip()
-                            classes = element.get_attribute("class")
-                            
-                            # Skip if it looks disabled
-                            if "disabled" in classes.lower() or "unavailable" in classes.lower():
-                                continue
-                            
-                            if date_text:
-                                appointments.append({
-                                    "date": date_text,
-                                    "element": element,
-                                    "classes": classes
-                                })
-                        except:
+                    try:
+                        # Check if visible and enabled
+                        if not element.is_displayed():
                             continue
-                            
+
+                        # Get date information
+                        date_text = element.text.strip()
+                        classes = element.get_attribute("class") or ""
+                        parent_classes = ""
+
+                        # Also check parent <td> classes
+                        try:
+                            parent = element.find_element(By.XPATH, "..")
+                            parent_classes = parent.get_attribute("class") or ""
+                        except:
+                            pass
+
+                        # Skip if disabled
+                        if "disabled" in classes.lower() or "disabled" in parent_classes.lower():
+                            continue
+                        if "ui-state-disabled" in classes or "ui-state-disabled" in parent_classes:
+                            continue
+
+                        if date_text and date_text.isdigit():
+                            appointments.append({
+                                "date": date_text,
+                                "element": element,
+                                "classes": classes,
+                                "parent_classes": parent_classes
+                            })
+                            logger.info(f"  Found available date: {date_text}")
+                    except Exception as e:
+                        logger.debug(f"Error processing date element: {e}")
+                        continue
+
                 if appointments:
                     break  # Found appointments with this selector
-                    
-            except:
+
+            except Exception as e:
+                logger.debug(f"Error with selector {selector}: {e}")
                 continue
-        
+
         if appointments:
-            logger.info(f"Found {len(appointments)} potentially available dates")
+            logger.info(f"✓ Found {len(appointments)} available dates")
             save_screenshot(driver, "appointments_found")
         else:
-            logger.info("No available appointments found")
-        
+            logger.info("No available appointments found in December 2025")
+            logger.info("All dates appear to be unavailable/grayed out")
+
         return appointments
-        
+
     except Exception as e:
         logger.error(f"Error checking availability: {e}", exc_info=True)
         return []

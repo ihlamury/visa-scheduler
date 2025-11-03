@@ -71,53 +71,70 @@ def setup_driver() -> webdriver.Chrome:
     Returns:
         Configured Chrome WebDriver instance
     """
-    try:
-        logging.info("Setting up undetected Chrome WebDriver...")
+    import time
 
-        # Configure options for undetected-chromedriver
-        options = uc.ChromeOptions()
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"Setting up undetected Chrome WebDriver (attempt {attempt + 1}/{max_retries})...")
 
-        if Config.HEADLESS:
-            options.add_argument("--headless=new")  # Use new headless mode
+            # Configure options for undetected-chromedriver
+            options = uc.ChromeOptions()
 
-        # Additional options for stability and stealth
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-blink-features=AutomationControlled")
+            if Config.HEADLESS:
+                options.add_argument("--headless=new")  # Use new headless mode
 
-        # Create undetected Chrome driver
-        # Specify version_main=141 to match your Chrome browser version
-        driver = uc.Chrome(
-            options=options,
-            use_subprocess=False,  # Changed to False to prevent premature closure
-            version_main=141,  # Match your Chrome version 141.x
-            driver_executable_path=None,  # Let it auto-download
-        )
+            # Additional options for stability and stealth
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--start-maximized")
+            options.add_argument("--disable-blink-features=AutomationControlled")
 
-        # Give the browser a moment to fully initialize
-        import time
-        time.sleep(2)
+            # Create undetected Chrome driver
+            # Specify version_main=141 to match your Chrome browser version
+            driver = uc.Chrome(
+                options=options,
+                use_subprocess=False,  # Prevent premature closure
+                version_main=141,  # Match your Chrome version 141.x
+                driver_executable_path=None,  # Let it auto-download
+            )
 
-        # Set timeouts
-        driver.implicitly_wait(Config.IMPLICIT_WAIT)
-        driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
+            # Give the browser time to fully initialize
+            time.sleep(3)
 
-        logging.info("✓ Undetected Chrome WebDriver initialized successfully")
-        return driver
+            # Verify the browser is actually open
+            try:
+                _ = driver.current_url
+                logging.info("✓ Browser window verified as open")
+            except Exception as e:
+                raise Exception(f"Browser window closed immediately: {e}")
 
-    except Exception as e:
-        error_msg = str(e)
-        logging.error(f"Failed to initialize undetected Chrome: {error_msg}")
+            # Set timeouts
+            driver.implicitly_wait(Config.IMPLICIT_WAIT)
+            driver.set_page_load_timeout(Config.PAGE_LOAD_TIMEOUT)
 
-        # Check if it's a version mismatch in the error message
-        if "version" in error_msg.lower() and "supports" in error_msg.lower():
-            logging.error("ChromeDriver version mismatch detected!")
-            logging.error("Please update Chrome browser: Open Chrome -> Settings -> About Chrome")
+            logging.info("✓ Undetected Chrome WebDriver initialized successfully")
+            return driver
 
-        raise Exception(f"Failed to initialize ChromeDriver: {error_msg}")
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Attempt {attempt + 1} failed: {error_msg}")
+
+            if attempt < max_retries - 1:
+                logging.info(f"Retrying in 3 seconds...")
+                time.sleep(3)
+            else:
+                # Last attempt failed
+                logging.error("All attempts to initialize Chrome failed")
+
+                # Check if it's a version mismatch
+                if "version" in error_msg.lower() and "supports" in error_msg.lower():
+                    logging.error("ChromeDriver version mismatch detected!")
+                    logging.error("Please update Chrome browser: Open Chrome -> Settings -> About Chrome")
+
+                raise Exception(f"Failed to initialize ChromeDriver after {max_retries} attempts: {error_msg}")
 
 
 def save_screenshot(driver: webdriver.Chrome, name: str) -> Optional[str]:

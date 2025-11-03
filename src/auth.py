@@ -377,6 +377,7 @@ def answer_security_questions(driver: webdriver.Chrome) -> bool:
         # Now match questions with answers
         logger.info(f"Processing {len(questions_found)} questions...")
         questions_answered = 0
+        unanswerable_questions = []
 
         for idx, question_text in enumerate(questions_found):
             logger.info(f"Question {idx+1}: {question_text}")
@@ -402,9 +403,42 @@ def answer_security_questions(driver: webdriver.Chrome) -> bool:
                     logger.warning(f"No input field available for question {idx+1}")
             else:
                 logger.warning(f"⚠️  No matching answer found for: {question_text}")
-                logger.warning("Available answer keys in config:")
-                for key in Config.SECURITY_ANSWERS.keys():
-                    logger.warning(f"  - {key}")
+                unanswerable_questions.append(question_text)
+
+        # Check if we have unanswerable questions - need to retry
+        if len(unanswerable_questions) > 0 and questions_answered < 2:
+            logger.warning("=" * 60)
+            logger.warning("Got security questions we don't have answers for:")
+            for q in unanswerable_questions:
+                logger.warning(f"  - {q}")
+            logger.warning("Clicking Cancel to retry with different questions...")
+            logger.warning("=" * 60)
+
+            # Click Cancel button to go back
+            cancel_selectors = [
+                (By.XPATH, "//button[contains(text(), 'Cancel')]"),
+                (By.XPATH, "//a[contains(text(), 'Cancel')]"),
+                (By.ID, "cancel"),
+                (By.NAME, "cancel"),
+                (By.XPATH, "//button[@type='button' and not(contains(text(), 'Continue'))]"),
+            ]
+
+            for by, selector in cancel_selectors:
+                try:
+                    cancel_button = driver.find_element(by, selector)
+                    if cancel_button.is_displayed():
+                        logger.info(f"Found Cancel button with: {selector}")
+                        cancel_button.click()
+                        logger.info("Clicked Cancel - going back to retry")
+                        time.sleep(2)
+                        save_screenshot(driver, "clicked_cancel_retry")
+                        return "RETRY"  # Special return code for retry
+                except:
+                    continue
+
+            logger.error("Could not find Cancel button to retry")
+            save_screenshot(driver, "no_cancel_button")
+            return False
 
         if questions_answered >= 2:
             logger.info(f"✓ Successfully filled {questions_answered} security answers")
@@ -498,28 +532,55 @@ def verify_logged_in(driver: webdriver.Chrome) -> bool:
 def full_authentication(driver: webdriver.Chrome) -> bool:
     """
     Perform complete authentication flow: login + security questions.
-    
+    Will retry if security questions we don't know appear.
+
     Args:
         driver: Selenium WebDriver instance
-        
+
     Returns:
         True if fully authenticated, False otherwise
     """
     logger.info("Starting full authentication process...")
-    
-    # Step 1: Login
-    if not login(driver, Config.USERNAME, Config.PASSWORD):
-        logger.error("Login failed")
+
+    max_retries = 10  # Maximum retries for getting answerable security questions
+    attempt = 0
+
+    while attempt < max_retries:
+        attempt += 1
+
+        if attempt > 1:
+            logger.info(f"Retry attempt {attempt}/{max_retries} for answerable security questions...")
+
+        # Step 1: Login
+        if not login(driver, Config.USERNAME, Config.PASSWORD):
+            logger.error("Login failed")
+            return False
+
+        # Step 2: Answer security questions
+        result = answer_security_questions(driver)
+
+        if result == "RETRY":
+            # Got unanswerable questions, need to retry
+            logger.warning(f"Attempt {attempt}: Got unanswerable questions, retrying...")
+            time.sleep(2)
+            # Loop will retry login from the beginning
+            continue
+        elif result:
+            # Successfully answered questions
+            logger.info(f"✓ Security questions answered on attempt {attempt}")
+            break
+        else:
+            # Error occurred
+            logger.error("Failed to answer security questions")
+            return False
+
+    if attempt >= max_retries:
+        logger.error(f"Failed to get answerable security questions after {max_retries} attempts")
         return False
-    
-    # Step 2: Answer security questions
-    if not answer_security_questions(driver):
-        logger.error("Failed to answer security questions")
-        return False
-    
+
     # Step 3: Verify we're logged in
     if not verify_logged_in(driver):
         logger.warning("Could not verify login status, but continuing...")
-    
+
     logger.info("Full authentication complete!")
     return True
